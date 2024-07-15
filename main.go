@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
 	_ "github.com/mattn/go-sqlite3" // import the sqlite3 driver
@@ -9,7 +11,80 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
+
+// TODO: что делать если дата начала позже значения now
+func NextDate(now time.Time, date string, repeat string) (string, error) {
+	parsedDate, err := time.Parse("20060102", date)
+	if err != nil {
+		return _, errors.New("недопустимый формат date")
+	}
+
+	repeatParts := strings.SplitN(repeat, " ", 2)
+	repeatType, repeatRule := repeatParts[0], repeatParts[1]
+	if len(repeatParts) < 2 {
+		repeatRule = ""
+	}
+
+	if repeatType == "d" {
+		if repeatRule == "" {
+			return _, errors.New("не указан интервал в днях")
+		} else {
+			numberOfDay, err := strconv.Atoi(repeatRule)
+			if err != nil {
+				return _, errors.New("некорректно указано правило repeat")
+			}
+			for now.After(parsedDate) {
+				parsedDate.AddDate(0, 0, numberOfDay)
+			}
+		}
+	} else if repeatType == "y" {
+		for now.After(parsedDate) {
+			parsedDate.AddDate(1, 0, 0)
+		}
+	} else {
+		return _, errors.New("недопустимый символ")
+	}
+
+	return parsedDate.String(), nil
+}
+
+func handleNextDate(res http.ResponseWriter, req *http.Request) {
+	now, err := time.Parse("20060102", chi.URLParam(req, "now"))
+
+	if err != nil {
+		http.Error(res, "Неправильный формат парамертра now", http.StatusBadRequest)
+		return
+	}
+
+	date := chi.URLParam(req, "date")
+	repeat := chi.URLParam(req, "repeat")
+
+	newDate, err := NextDate(now, date, repeat)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// TODO: узнать что имеется ввиду под удалением из дб, у меня же нет никакого айди таска
+
+	resp, err := json.Marshal(newDate)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write(resp)
+	if err != nil {
+		fmt.Printf("Error in writing a response for /api/nextdate GET request,\n %v", err)
+		return
+	}
+}
 
 func main() {
 	r := chi.NewRouter()
@@ -54,6 +129,8 @@ func main() {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+
+	r.Get("/api/nextdate")
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
