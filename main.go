@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
@@ -20,48 +19,63 @@ import (
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 	parsedDate, err := time.Parse("20060102", date)
 	if err != nil {
-		return _, errors.New("недопустимый формат date")
+		return "", errors.New("недопустимый формат date")
 	}
 
 	repeatParts := strings.SplitN(repeat, " ", 2)
-	repeatType, repeatRule := repeatParts[0], repeatParts[1]
-	if len(repeatParts) < 2 {
-		repeatRule = ""
+	repeatType := ""
+	repeatRule := ""
+
+	if len(repeatParts) > 0 {
+		repeatType = repeatParts[0]
+	}
+	if len(repeatParts) > 1 {
+		repeatRule = repeatParts[1]
 	}
 
 	if repeatType == "d" {
 		if repeatRule == "" {
-			return _, errors.New("не указан интервал в днях")
+			return "", errors.New("не указан интервал в днях")
 		} else {
-			numberOfDay, err := strconv.Atoi(repeatRule)
+			numberOfDays, err := strconv.Atoi(repeatRule)
 			if err != nil {
-				return _, errors.New("некорректно указано правило repeat")
+				return "", errors.New("некорректно указано правило repeat")
 			}
+			if numberOfDays > 400 {
+				return "", errors.New("превышен максимально допустимый интервал")
+			}
+			parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			for now.After(parsedDate) {
-				parsedDate.AddDate(0, 0, numberOfDay)
+				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			}
 		}
 	} else if repeatType == "y" {
+		parsedDate = parsedDate.AddDate(1, 0, 0)
 		for now.After(parsedDate) {
-			parsedDate.AddDate(1, 0, 0)
+			parsedDate = parsedDate.AddDate(1, 0, 0)
 		}
 	} else {
-		return _, errors.New("недопустимый символ")
+		return "", errors.New("недопустимый символ")
 	}
 
-	return parsedDate.String(), nil
+	return parsedDate.Format("20060102"), nil
 }
 
 func handleNextDate(res http.ResponseWriter, req *http.Request) {
-	now, err := time.Parse("20060102", chi.URLParam(req, "now"))
+	nowParam := req.URL.Query().Get("now")
+	date := req.URL.Query().Get("date")
+	repeat := req.URL.Query().Get("repeat")
 
-	if err != nil {
-		http.Error(res, "Неправильный формат парамертра now", http.StatusBadRequest)
-		return
+	if date == "20250701" {
+		fmt.Println(date)
 	}
 
-	date := chi.URLParam(req, "date")
-	repeat := chi.URLParam(req, "repeat")
+	now, err := time.Parse("20060102", nowParam)
+
+	if err != nil {
+		http.Error(res, "Неправильный формат парамeтра now", http.StatusBadRequest)
+		return
+	}
 
 	newDate, err := NextDate(now, date, repeat)
 	if err != nil {
@@ -71,15 +85,9 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 
 	// TODO: узнать что имеется ввиду под удалением из дб, у меня же нет никакого айди таска
 
-	resp, err := json.Marshal(newDate)
-	if err != nil {
-		http.Error(res, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	res.Header().Set("Content-Type", "application/json")
+	res.Header().Set("Content-Type", "text/plain")
 	res.WriteHeader(http.StatusOK)
-	_, err = res.Write(resp)
+	_, err = res.Write([]byte(newDate))
 	if err != nil {
 		fmt.Printf("Error in writing a response for /api/nextdate GET request,\n %v", err)
 		return
@@ -130,7 +138,7 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	r.Get("/api/nextdate")
+	r.Get("/api/nextdate", handleNextDate)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
