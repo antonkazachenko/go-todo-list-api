@@ -81,7 +81,7 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 	date := req.URL.Query().Get("date")
 	repeat := req.URL.Query().Get("repeat")
 
-	if date == "20250701" {
+	if date == "20240126" {
 		fmt.Println(date)
 	}
 
