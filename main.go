@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// TODO: что делать если дата начала позже значения now
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 	parsedDate, err := time.Parse("20060102", date)
 	if err != nil {
@@ -53,6 +52,22 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 		parsedDate = parsedDate.AddDate(1, 0, 0)
 		for now.After(parsedDate) {
 			parsedDate = parsedDate.AddDate(1, 0, 0)
+		}
+	} else if repeatType == "w" {
+		substrings := strings.Split(repeatRule, ",")
+
+		resultMap := make(map[string]bool)
+
+		for _, value := range substrings {
+			resultMap[value] = true
+		}
+
+		for {
+			weekdayStr := fmt.Sprintf("%d", parsedDate.Weekday())
+			if _, exists := resultMap[weekdayStr]; exists {
+				break
+			}
+			parsedDate = parsedDate.AddDate(0, 0, 1)
 		}
 	} else {
 		return "", errors.New("недопустимый символ")
