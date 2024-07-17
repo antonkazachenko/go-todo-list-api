@@ -97,7 +97,7 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 			if err != nil {
 				return "", errors.New("ошибка конвертации значения дня месяца")
 			}
-			if day < -31 || day > 31 || day == 0 {
+			if day < -2 || day > 31 || day == 0 {
 				return "", errors.New("недопустимое значение дня месяца")
 			}
 			dayMap[day] = true
