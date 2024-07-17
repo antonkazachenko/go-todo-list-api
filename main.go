@@ -56,18 +56,102 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 	} else if repeatType == "w" {
 		substrings := strings.Split(repeatRule, ",")
 
-		resultMap := make(map[string]bool)
-
+		daysOfWeek := make(map[int]bool)
 		for _, value := range substrings {
-			resultMap[value] = true
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return "", errors.New("ошибка конвертации значения дня недели")
+			}
+			if number < 1 || number > 7 {
+				return "", errors.New("недопустимое значение дня недели")
+			}
+
+			if number == 7 {
+				number = 0
+			}
+			daysOfWeek[number] = true
 		}
 
 		for {
-			weekdayStr := fmt.Sprintf("%d", parsedDate.Weekday())
-			if _, exists := resultMap[weekdayStr]; exists {
-				break
+			if daysOfWeek[int(parsedDate.Weekday())] {
+				if now.Before(parsedDate) {
+					break
+				}
 			}
 			parsedDate = parsedDate.AddDate(0, 0, 1)
+		}
+	} else if repeatType == "m" {
+		repeatParts := strings.Split(repeatRule, " ")
+		daysPart := repeatParts[0]
+		monthsPart := ""
+		if len(repeatParts) > 1 {
+			monthsPart = repeatParts[1]
+		}
+
+		days := strings.Split(daysPart, ",")
+		months := strings.Split(monthsPart, ",")
+
+		dayMap := make(map[int]bool)
+		for _, dayStr := range days {
+			day, err := strconv.Atoi(dayStr)
+			if err != nil {
+				return "", errors.New("ошибка конвертации значения дня месяца")
+			}
+			if day < -31 || day > 31 || day == 0 {
+				return "", errors.New("недопустимое значение дня месяца")
+			}
+			dayMap[day] = true
+		}
+
+		monthMap := make(map[int]bool)
+		for _, monthStr := range months {
+			if monthStr != "" {
+				month, err := strconv.Atoi(monthStr)
+				if err != nil {
+					return "", errors.New("ошибка конвертации значения месяца")
+				}
+				if month < 1 || month > 12 {
+					return "", errors.New("недопустимое значение месяца")
+				}
+				monthMap[month] = true
+			}
+		}
+
+		found := false
+		for i := 0; i < 12*10; i++ {
+			month := int(parsedDate.Month())
+			if len(monthMap) > 0 && !monthMap[month] {
+				parsedDate = parsedDate.AddDate(0, 1, 0)
+				parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
+				continue
+			}
+
+			lastDayOfMonth := time.Date(parsedDate.Year(), parsedDate.Month()+1, 0, 0, 0, 0, 0, parsedDate.Location()).Day()
+			for targetDay := range dayMap {
+				if targetDay > 0 {
+					if parsedDate.Day() == targetDay && now.Before(parsedDate) {
+						found = true
+						break
+					}
+				} else if targetDay < 0 {
+					if parsedDate.Day() == lastDayOfMonth+targetDay+1 && now.Before(parsedDate) {
+						found = true
+						break
+					}
+				}
+			}
+			if found {
+				break
+			}
+
+			parsedDate = parsedDate.AddDate(0, 0, 1)
+			if parsedDate.Day() == 1 {
+				parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
+			}
+		}
+
+		if !found {
+			return "", nil
 		}
 	} else {
 		return "", errors.New("недопустимый символ")
@@ -81,7 +165,7 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 	date := req.URL.Query().Get("date")
 	repeat := req.URL.Query().Get("repeat")
 
-	if date == "20240126" {
+	if date == "20230126" {
 		fmt.Println(date)
 	}
 
@@ -91,8 +175,12 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, "Неправильный формат парамeтра now", http.StatusBadRequest)
 		return
 	}
-
-	newDate, err := NextDate(now, date, repeat)
+	var newDate string
+	if repeat != "" {
+		newDate, err = NextDate(now, date, repeat)
+	} else {
+		fmt.Println("Задача удалена")
+	}
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusBadRequest)
 		return
