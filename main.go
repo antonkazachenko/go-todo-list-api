@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
-	_ "github.com/mattn/go-sqlite3" // import the sqlite3 driver
+	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +16,19 @@ import (
 	"strings"
 	"time"
 )
+
+var db *sql.DB
+
+type idResponse struct {
+	ID int64 `json:"id"`
+}
+
+type Task struct {
+	Date    string `json:"date,omitempty"`
+	Title   string `json:"title"`
+	Comment string `json:"comment,omitempty"`
+	Repeat  string `json:"repeat,omitempty"`
+}
 
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 	parsedDate, err := time.Parse("20060102", date)
@@ -186,13 +201,84 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// TODO: узнать что имеется ввиду под удалением из дб, у меня же нет никакого айди таска
-
 	res.Header().Set("Content-Type", "text/plain")
 	res.WriteHeader(http.StatusOK)
 	_, err = res.Write([]byte(newDate))
 	if err != nil {
 		fmt.Printf("Error in writing a response for /api/nextdate GET request,\n %v", err)
+		return
+	}
+}
+
+func handleAddTask(res http.ResponseWriter, req *http.Request) {
+	var buf bytes.Buffer
+	var task Task
+
+	_, err := buf.ReadFrom(req.Body)
+	if err != nil {
+		http.Error(res, "ошибка десериализации JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err = json.Unmarshal(buf.Bytes(), &task); err != nil {
+		http.Error(res, "ошибка десериализации JSON", http.StatusBadRequest)
+		return
+	}
+
+	if task.Title == "" {
+		http.Error(res, "не указан заголовок задачи", http.StatusBadRequest)
+		return
+	}
+
+	var dateInTime time.Time
+	if task.Date != "" {
+		dateInTime, err = time.Parse("20060102", task.Date)
+		if err != nil {
+			http.Error(res, "дата представлена в формате, отличном от 20060102", http.StatusBadRequest)
+			return
+		}
+	} else {
+		task.Date = time.Now().Format("20060102")
+		dateInTime = time.Now()
+	}
+
+	if time.Now().After(dateInTime) {
+		if task.Repeat == "" {
+			task.Date = time.Now().Format("20060102")
+			dateInTime = time.Now()
+		} else {
+			task.Date, err = NextDate(time.Now(), task.Date, task.Repeat)
+			if err != nil {
+				http.Error(res, "правило повторения указано в неправильном формате", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
+	result, err := db.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)",
+		sql.Named("date", task.Date),
+		sql.Named("title", task.Title),
+		sql.Named("comment", task.Comment),
+		sql.Named("repeat", task.Repeat))
+
+	// task.Date, task.Title, task.Comment, task.Repeat
+	if err != nil {
+		http.Error(res, "ошибка добавления в таблицу", http.StatusBadRequest)
+		return
+	}
+	var ret idResponse
+	ret.ID, err = result.LastInsertId()
+	if err != nil {
+		http.Error(res, "ошибка получения последнего добавленного ID", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := json.Marshal(ret)
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write(resp)
+	if err != nil {
+		http.Error(res, "ошибка при записи ответа", http.StatusBadRequest)
 		return
 	}
 }
@@ -205,19 +291,19 @@ func main() {
 		TODO_DBFILE = "scheduler.db"
 	}
 
-	db, err := sql.Open("sqlite3", TODO_DBFILE)
+	var err error
+	db, err = sql.Open("sqlite3", TODO_DBFILE)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer db.Close()
 
-	// Always attempt to create the table and index if they do not exist
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS scheduler (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		date TEXT NOT NULL,
 		title TEXT NOT NULL,
-		comment TEXT NOT NULL,
-		repeat TEXT NOT NULL
+		comment TEXT,
+		repeat TEXT
 	)`)
 	if err != nil {
 		log.Fatalf("Failed to create table: %v", err)
@@ -242,6 +328,7 @@ func main() {
 	})
 
 	r.Get("/api/nextdate", handleNextDate)
+	r.Post("/api/task", handleAddTask)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
