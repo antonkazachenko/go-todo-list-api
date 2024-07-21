@@ -23,6 +23,10 @@ type idResponse struct {
 	ID int64 `json:"id"`
 }
 
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
 type Task struct {
 	Date    string `json:"date,omitempty"`
 	Title   string `json:"title"`
@@ -59,7 +63,7 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
 			parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-			for now.After(parsedDate) {
+			for now.After(parsedDate) && now.Format("20060102") != parsedDate.Format("20060102") {
 				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			}
 		}
@@ -180,10 +184,6 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 	date := req.URL.Query().Get("date")
 	repeat := req.URL.Query().Get("repeat")
 
-	if date == "20230126" {
-		fmt.Println(date)
-	}
-
 	now, err := time.Parse("20060102", nowParam)
 
 	if err != nil {
@@ -193,8 +193,6 @@ func handleNextDate(res http.ResponseWriter, req *http.Request) {
 	var newDate string
 	if repeat != "" {
 		newDate, err = NextDate(now, date, repeat)
-	} else {
-		fmt.Println("Задача удалена")
 	}
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusBadRequest)
@@ -216,17 +214,38 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 
 	_, err := buf.ReadFrom(req.Body)
 	if err != nil {
-		http.Error(res, "ошибка десериализации JSON", http.StatusBadRequest)
+		var resp errorResponse
+		resp.Error = "ошибка десериализации JSON"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
 		return
 	}
 
 	if err = json.Unmarshal(buf.Bytes(), &task); err != nil {
-		http.Error(res, "ошибка десериализации JSON", http.StatusBadRequest)
+		var resp errorResponse
+		resp.Error = "ошибка десериализации JSON"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
 		return
 	}
 
 	if task.Title == "" {
-		http.Error(res, "не указан заголовок задачи", http.StatusBadRequest)
+		var resp errorResponse
+		resp.Error = "отсутствует обязательное поле title"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
 		return
 	}
 
@@ -234,7 +253,14 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 	if task.Date != "" {
 		dateInTime, err = time.Parse("20060102", task.Date)
 		if err != nil {
-			http.Error(res, "дата представлена в формате, отличном от 20060102", http.StatusBadRequest)
+			var resp errorResponse
+			resp.Error = "недопустимый формат date"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusBadRequest)
 			return
 		}
 	} else {
@@ -247,38 +273,48 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 			task.Date = time.Now().Format("20060102")
 			dateInTime = time.Now()
 		} else {
+			if task.Repeat == "d 1" {
+				fmt.Println("here")
+			}
 			task.Date, err = NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-				http.Error(res, "правило повторения указано в неправильном формате", http.StatusBadRequest)
+				var resp errorResponse
+				resp.Error = "правило повторения указано в неправильном формате"
+				respBytes, err := json.Marshal(resp)
+				if err != nil {
+					http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+					return
+				}
+				http.Error(res, string(respBytes), http.StatusBadRequest)
 				return
 			}
 		}
 	}
 
-	result, err := db.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)",
-		sql.Named("date", task.Date),
-		sql.Named("title", task.Title),
-		sql.Named("comment", task.Comment),
-		sql.Named("repeat", task.Repeat))
-
-	// task.Date, task.Title, task.Comment, task.Repeat
+	result, err := db.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
+		task.Date, task.Title, task.Comment, task.Repeat)
 	if err != nil {
-		http.Error(res, "ошибка добавления в таблицу", http.StatusBadRequest)
+		http.Error(res, fmt.Sprintf("ошибка добавления в таблицу: %v", err), http.StatusBadRequest)
 		return
 	}
+
 	var ret idResponse
 	ret.ID, err = result.LastInsertId()
 	if err != nil {
-		http.Error(res, "ошибка получения последнего добавленного ID", http.StatusBadRequest)
+		http.Error(res, fmt.Sprintf("ошибка получения последнего добавленного ID: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	resp, err := json.Marshal(ret)
+	if err != nil {
+		http.Error(res, fmt.Sprintf("ошибка при сериализации ответа: %v", err), http.StatusBadRequest)
+		return
+	}
 	res.Header().Set("Content-Type", "application/json")
 	res.WriteHeader(http.StatusOK)
 	_, err = res.Write(resp)
 	if err != nil {
-		http.Error(res, "ошибка при записи ответа", http.StatusBadRequest)
+		http.Error(res, fmt.Sprintf("ошибка при записи ответа: %v", err), http.StatusBadRequest)
 		return
 	}
 }
