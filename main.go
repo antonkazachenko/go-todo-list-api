@@ -294,7 +294,14 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 	result, err := db.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
 		task.Date, task.Title, task.Comment, task.Repeat)
 	if err != nil {
-		http.Error(res, fmt.Sprintf("ошибка добавления в таблицу: %v", err), http.StatusBadRequest)
+		var resp errorResponse
+		resp.Error = "ошибка запроса к базе данных"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
 		return
 	}
 
@@ -315,6 +322,97 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 	_, err = res.Write(resp)
 	if err != nil {
 		http.Error(res, fmt.Sprintf("ошибка при записи ответа: %v", err), http.StatusBadRequest)
+		return
+	}
+}
+
+func handleGetTasks(res http.ResponseWriter, req *http.Request) {
+	searchTerm := req.URL.Query().Get("search")
+	limit := 100
+
+	query := "SELECT id, date, title, comment, repeat FROM scheduler"
+	args := []interface{}{}
+
+	parsedDate, dateErr := time.Parse("02.01.2006", searchTerm)
+	if dateErr == nil {
+		formattedDate := parsedDate.Format("20060102")
+		query += " WHERE date = ? ORDER BY date LIMIT ?"
+		args = append(args, formattedDate, limit)
+	} else if searchTerm != "" {
+		query += " WHERE title LIKE ? OR comment LIKE ? ORDER BY date LIMIT ?"
+		searchTerm = "%" + searchTerm + "%"
+		args = append(args, searchTerm, searchTerm, limit)
+	} else {
+		query += " ORDER BY date LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка запроса к базе данных"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var tasks []map[string]string
+	for rows.Next() {
+		var id int64
+		var date, title, comment, repeat string
+		err = rows.Scan(&id, &date, &title, &comment, &repeat)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка сканирования строки"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+		taskMap := map[string]string{
+			"id":      strconv.FormatInt(id, 10),
+			"date":    date,
+			"title":   title,
+			"comment": comment,
+			"repeat":  repeat,
+		}
+		tasks = append(tasks, taskMap)
+	}
+
+	if tasks == nil {
+		tasks = make([]map[string]string, 0)
+	}
+	resp, err := json.Marshal(map[string][]map[string]string{"tasks": tasks})
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка сериализации ответа"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write(resp)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка записи ответа"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
 		return
 	}
 }
@@ -365,6 +463,7 @@ func main() {
 
 	r.Get("/api/nextdate", handleNextDate)
 	r.Post("/api/task", handleAddTask)
+	r.Get("/api/tasks", handleGetTasks)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
