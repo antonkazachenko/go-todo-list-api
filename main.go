@@ -502,6 +502,162 @@ func handleGetTask(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func handlePutTask(res http.ResponseWriter, req *http.Request) {
+	var taskUpdates map[string]interface{}
+	err := json.NewDecoder(req.Body).Decode(&taskUpdates)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка десериализации JSON"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	id, ok := taskUpdates["id"].(string)
+	if !ok {
+		var resp errorResponse
+		resp.Error = "отсутствует обязательное поле id"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	title, ok := taskUpdates["title"].(string)
+	if !ok || title == "" {
+		var resp errorResponse
+		resp.Error = "отсутствует обязательное поле title"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	date, ok := taskUpdates["date"].(string)
+	if !ok || date == "" {
+		var resp errorResponse
+		resp.Error = "отсутствует обязательное поле date"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	_, err = time.Parse("20060102", date)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "недопустимый формат date"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	if repeat, ok := taskUpdates["repeat"].(string); ok {
+		if repeat != "" {
+			repeatParts := strings.SplitN(repeat, " ", 2)
+			repeatType := repeatParts[0]
+			if repeatType != "d" && repeatType != "w" && repeatType != "m" && repeatType != "y" {
+				var resp errorResponse
+				resp.Error = "недопустимый символ"
+				respBytes, err := json.Marshal(resp)
+				if err != nil {
+					http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+					return
+				}
+				http.Error(res, string(respBytes), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
+	query := "UPDATE scheduler SET "
+	args := []interface{}{}
+	i := 0
+
+	for key, value := range taskUpdates {
+		if key != "id" {
+			if i > 0 {
+				query += ", "
+			}
+			query += fmt.Sprintf("%s = ?", key)
+			args = append(args, value)
+			i++
+		}
+	}
+
+	query += " WHERE id = ?"
+	args = append(args, id)
+
+	result, err := db.Exec(query, args...)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка запроса к базе данных"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка получения числа затронутых строк"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		var resp errorResponse
+		resp.Error = "задача с указанным id не найдена"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusNotFound)
+		return
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write([]byte(`{}`))
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка при записи ответа"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	r := chi.NewRouter()
 
@@ -550,6 +706,7 @@ func main() {
 	r.Post("/api/task", handleAddTask)
 	r.Get("/api/tasks", handleGetTasks)
 	r.Get("/api/task", handleGetTask)
+	r.Put("/api/task", handlePutTask)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
