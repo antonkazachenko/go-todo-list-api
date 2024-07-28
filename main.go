@@ -434,6 +434,18 @@ func handleGetTask(res http.ResponseWriter, req *http.Request) {
 		}
 		defer rows.Close()
 
+		if !rows.Next() {
+			var resp errorResponse
+			resp.Error = "задача с указанным id не найдена"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusNotFound)
+			return
+		}
+
 		for rows.Next() {
 			var id int64
 			var date, title, comment, repeat string
@@ -658,6 +670,108 @@ func handlePutTask(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func handleDoneTask(res http.ResponseWriter, req *http.Request) {
+	id := req.URL.Query().Get("id")
+
+	if id == "" {
+		var resp errorResponse
+		resp.Error = "не передан идентификатор"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	row := db.QueryRow("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
+	var taskID int64
+	var date, title, comment, repeat string
+	err := row.Scan(&taskID, &date, &title, &comment, &repeat)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			var resp errorResponse
+			resp.Error = "задача с указанным id не найдена"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusNotFound)
+			return
+		}
+		var resp errorResponse
+		resp.Error = "ошибка сканирования строки"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	if repeat == "" {
+		_, err = db.Exec("DELETE FROM scheduler WHERE id = ?", taskID)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка запроса к базе данных"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		date, err = NextDate(time.Now(), date, repeat)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "правило повторения указано в неправильном формате"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusBadRequest)
+			return
+		}
+		_, err = db.Exec("UPDATE scheduler SET date = ? WHERE id = ?", date, taskID)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка запроса к базе данных"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	respBytes, err := json.Marshal(struct{}{})
+	if err != nil {
+		http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+		return
+	}
+	_, err = res.Write(respBytes)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка при записи ответа"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	r := chi.NewRouter()
 
@@ -707,6 +821,7 @@ func main() {
 	r.Get("/api/tasks", handleGetTasks)
 	r.Get("/api/task", handleGetTask)
 	r.Put("/api/task", handlePutTask)
+	r.Post("/api/task/done", handleDoneTask)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
