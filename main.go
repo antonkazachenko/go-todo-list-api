@@ -62,6 +62,7 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 			if numberOfDays > 400 {
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
+			parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			for now.After(parsedDate) && now.Format("20060102") != parsedDate.Format("20060102") {
 				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			}
@@ -726,6 +727,9 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 	} else {
+		if date == "20240728" {
+			fmt.Printf("date: %v\n", date)
+		}
 		date, err = NextDate(time.Now(), date, repeat)
 		if err != nil {
 			var resp errorResponse
@@ -769,6 +773,80 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 		http.Error(res, string(respBytes), http.StatusInternalServerError)
+	}
+}
+
+func handleDeleteTask(res http.ResponseWriter, req *http.Request) {
+	id := req.URL.Query().Get("id")
+
+	if id == "" {
+		var resp errorResponse
+		resp.Error = "не передан идентификатор"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	} else {
+		sqlRes, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка запроса к базе данных"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+
+		rowsAffected, err := sqlRes.RowsAffected()
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка получения количества затронутых строк"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+
+		if rowsAffected == 0 {
+			var resp errorResponse
+			resp.Error = "задача с указанным id не найдена"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusNotFound)
+			return
+		}
+
+		res.Header().Set("Content-Type", "application/json")
+		res.WriteHeader(http.StatusOK)
+		respBytes, err := json.Marshal(struct{}{})
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		_, err = res.Write(respBytes)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка при записи ответа"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+		}
+		return
 	}
 }
 
@@ -821,6 +899,7 @@ func main() {
 	r.Get("/api/tasks", handleGetTasks)
 	r.Get("/api/task", handleGetTask)
 	r.Put("/api/task", handlePutTask)
+	r.Delete("/api/task", handleDeleteTask)
 	r.Post("/api/task/done", handleDoneTask)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
