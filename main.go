@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v4"
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"net/http"
@@ -18,6 +19,10 @@ import (
 )
 
 var db *sql.DB
+
+type authResponse struct {
+	Token string `json:"token"`
+}
 
 type idResponse struct {
 	ID int64 `json:"id"`
@@ -62,8 +67,12 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 			if numberOfDays > 400 {
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
-			parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-			for now.After(parsedDate) && now.Format("20060102") != parsedDate.Format("20060102") {
+
+			for now.After(parsedDate) {
+				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
+			}
+
+			if parsedDate.Format("20060102") == now.Format("20060102") {
 				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 			}
 		}
@@ -727,10 +736,9 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 	} else {
-		if date == "20240728" {
-			fmt.Printf("date: %v\n", date)
-		}
+		fmt.Printf("date: %v --- ", date)
 		date, err = NextDate(time.Now(), date, repeat)
+		fmt.Println("date after: ", date)
 		if err != nil {
 			var resp errorResponse
 			resp.Error = "правило повторения указано в неправильном формате"
@@ -850,6 +858,122 @@ func handleDeleteTask(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func handleSignIn(res http.ResponseWriter, req *http.Request) {
+	pass := os.Getenv("TODO_PASSWORD")
+	if len(pass) == 0 {
+		var resp errorResponse
+		resp.Error = "пароль не установлен"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	var buf bytes.Buffer
+	_, err := buf.ReadFrom(req.Body)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка чтения тела запроса"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	var body map[string]string
+	err = json.Unmarshal(buf.Bytes(), &body)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка десериализации JSON"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	if body["password"] != pass {
+		var resp errorResponse
+		resp.Error = "неверный пароль"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusBadRequest)
+		return
+	}
+
+	token := jwt.New(jwt.SigningMethodHS256)
+	tokenString, err := token.SignedString([]byte(pass))
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка создания токена"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	var resp authResponse
+	resp.Token = tokenString
+	respBytes, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+		return
+	}
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write(respBytes)
+	if err != nil {
+		http.Error(res, "ошибка записи ответа", http.StatusInternalServerError)
+	}
+}
+
+func auth(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pass := os.Getenv("TODO_PASSWORD")
+		if len(pass) > 0 {
+			var jwtToken string
+			cookie, err := r.Cookie("token")
+			if err == nil {
+				jwtToken = cookie.Value
+			}
+
+			var valid bool
+			if jwtToken != "" {
+				token, err := jwt.Parse(jwtToken, func(token *jwt.Token) (interface{}, error) {
+					if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+						return nil, http.ErrAbortHandler
+					}
+					return []byte(pass), nil
+				})
+
+				if err == nil && token.Valid {
+					valid = true
+				}
+			}
+
+			if !valid {
+				http.Error(w, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+		}
+		next(w, r)
+	})
+}
+
 func main() {
 	r := chi.NewRouter()
 
@@ -895,12 +1019,13 @@ func main() {
 	})
 
 	r.Get("/api/nextdate", handleNextDate)
-	r.Post("/api/task", handleAddTask)
-	r.Get("/api/tasks", handleGetTasks)
-	r.Get("/api/task", handleGetTask)
-	r.Put("/api/task", handlePutTask)
-	r.Delete("/api/task", handleDeleteTask)
-	r.Post("/api/task/done", handleDoneTask)
+	r.Post("/api/task", auth(handleAddTask))
+	r.Get("/api/tasks", auth(handleGetTasks))
+	r.Get("/api/task", auth(handleGetTask))
+	r.Put("/api/task", auth(handlePutTask))
+	r.Delete("/api/task", auth(handleDeleteTask))
+	r.Post("/api/task/done", auth(handleDoneTask))
+	r.Post("/api/signin", handleSignIn)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
