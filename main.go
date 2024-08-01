@@ -68,13 +68,22 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
 
-			for now.After(parsedDate) {
-				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
+			//if numberOfDays != 0 && now.After(parsedDate) && now.Format("20060102") != parsedDate.Format("20060102") {
+			//	parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
+			//}
+			if now.Format("20060102") != parsedDate.Format("20060102") {
+				if numberOfDays == 1 {
+					fmt.Println("here")
+				}
+				if now.After(parsedDate) {
+					for now.After(parsedDate) || now.Format("20060102") == parsedDate.Format("20060102") {
+						parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
+					}
+				} else {
+					parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
+				}
 			}
 
-			if parsedDate.Format("20060102") == now.Format("20060102") {
-				parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-			}
 		}
 	} else if repeatType == "y" {
 		parsedDate = parsedDate.AddDate(1, 0, 0)
@@ -430,21 +439,11 @@ func handleGetTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
 	if id != "" {
-		rows, err := db.Query("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
+		row := db.QueryRow("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
+		var id int64
+		var task Task
+		err := row.Scan(&id, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 		if err != nil {
-			var resp errorResponse
-			resp.Error = "ошибка запроса к базе данных"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-
-		if !rows.Next() {
 			var resp errorResponse
 			resp.Error = "задача с указанным id не найдена"
 			respBytes, err := json.Marshal(resp)
@@ -456,60 +455,31 @@ func handleGetTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		for rows.Next() {
-			var id int64
-			var date, title, comment, repeat string
-			err = rows.Scan(&id, &date, &title, &comment, &repeat)
+		resp, err := json.Marshal(task)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка сериализации ответа"
+			respBytes, err := json.Marshal(resp)
 			if err != nil {
-				var resp errorResponse
-				resp.Error = "ошибка сканирования строки"
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-					return
-				}
-				http.Error(res, string(respBytes), http.StatusInternalServerError)
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
 				return
 			}
-			taskMap := map[string]string{
-				"id":      strconv.FormatInt(id, 10),
-				"date":    date,
-				"title":   title,
-				"comment": comment,
-				"repeat":  repeat,
-			}
-
-			if taskMap["date"] == "20240727" {
-				fmt.Printf("taskMap: %v\n", taskMap)
-			}
-
-			resp, err := json.Marshal(taskMap)
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
+		}
+		res.Header().Set("Content-Type", "application/json")
+		res.WriteHeader(http.StatusOK)
+		_, err = res.Write(resp)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "ошибка записи ответа"
+			respBytes, err := json.Marshal(resp)
 			if err != nil {
-				var resp errorResponse
-				resp.Error = "ошибка сериализации ответа"
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-					return
-				}
-				http.Error(res, string(respBytes), http.StatusInternalServerError)
+				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
 				return
 			}
-			res.Header().Set("Content-Type", "application/json")
-			res.WriteHeader(http.StatusOK)
-			_, err = res.Write(resp)
-			if err != nil {
-				var resp errorResponse
-				resp.Error = "ошибка записи ответа"
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-					return
-				}
-				http.Error(res, string(respBytes), http.StatusInternalServerError)
-				return
-			}
-
+			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			return
 		}
 	} else {
 		var resp errorResponse
@@ -737,7 +707,23 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		fmt.Printf("date: %v --- ", date)
-		date, err = NextDate(time.Now(), date, repeat)
+		parsedDate, err := time.Parse("20060102", date)
+		if err != nil {
+			var resp errorResponse
+			resp.Error = "недопустимый формат date"
+			respBytes, err := json.Marshal(resp)
+			if err != nil {
+				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
+				return
+			}
+			http.Error(res, string(respBytes), http.StatusBadRequest)
+			return
+		}
+		if time.Now().After(parsedDate) || time.Now().Format("20060102") == parsedDate.Format("20060102") {
+			date, err = NextDate(time.Now(), date, repeat)
+		} else {
+			date, err = NextDate(parsedDate.AddDate(0, 0, 1), date, repeat)
+		}
 		fmt.Println("date after: ", date)
 		if err != nil {
 			var resp errorResponse
