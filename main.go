@@ -33,6 +33,7 @@ type errorResponse struct {
 }
 
 type Task struct {
+	ID      string `json:"id"`
 	Date    string `json:"date,omitempty"`
 	Title   string `json:"title"`
 	Comment string `json:"comment,omitempty"`
@@ -68,13 +69,7 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
 
-			//if numberOfDays != 0 && now.After(parsedDate) && now.Format("20060102") != parsedDate.Format("20060102") {
-			//	parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-			//}
 			if now.Format("20060102") != parsedDate.Format("20060102") {
-				if numberOfDays == 1 {
-					fmt.Println("here")
-				}
 				if now.After(parsedDate) {
 					for now.After(parsedDate) || now.Format("20060102") == parsedDate.Format("20060102") {
 						parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
@@ -291,9 +286,6 @@ func handleAddTask(res http.ResponseWriter, req *http.Request) {
 			task.Date = time.Now().Format("20060102")
 			dateInTime = time.Now()
 		} else {
-			if task.Repeat == "d 1" {
-				fmt.Println("here")
-			}
 			task.Date, err = NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
 				var resp errorResponse
@@ -440,9 +432,8 @@ func handleGetTask(res http.ResponseWriter, req *http.Request) {
 
 	if id != "" {
 		row := db.QueryRow("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
-		var id int64
 		var task Task
-		err := row.Scan(&id, &task.Date, &task.Title, &task.Comment, &task.Repeat)
+		err := row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 		if err != nil {
 			var resp errorResponse
 			resp.Error = "задача с указанным id не найдена"
@@ -706,7 +697,6 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 	} else {
-		fmt.Printf("date: %v --- ", date)
 		parsedDate, err := time.Parse("20060102", date)
 		if err != nil {
 			var resp errorResponse
@@ -719,10 +709,11 @@ func handleDoneTask(res http.ResponseWriter, req *http.Request) {
 			http.Error(res, string(respBytes), http.StatusBadRequest)
 			return
 		}
-		if time.Now().After(parsedDate) || time.Now().Format("20060102") == parsedDate.Format("20060102") {
-			date, err = NextDate(time.Now(), date, repeat)
+		if parsedDate.Format("20060102") == time.Now().Format("20060102") {
+			parsedDate = parsedDate.AddDate(0, 0, -1)
+			date, err = NextDate(parsedDate, date, repeat)
 		} else {
-			date, err = NextDate(parsedDate.AddDate(0, 0, 1), date, repeat)
+			date, err = NextDate(time.Now(), date, repeat)
 		}
 		fmt.Println("date after: ", date)
 		if err != nil {
@@ -783,64 +774,63 @@ func handleDeleteTask(res http.ResponseWriter, req *http.Request) {
 		}
 		http.Error(res, string(respBytes), http.StatusBadRequest)
 		return
-	} else {
-		sqlRes, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
-		if err != nil {
-			var resp errorResponse
-			resp.Error = "ошибка запроса к базе данных"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
-			return
-		}
+	}
 
-		rowsAffected, err := sqlRes.RowsAffected()
-		if err != nil {
-			var resp errorResponse
-			resp.Error = "ошибка получения количества затронутых строк"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
-			return
-		}
-
-		if rowsAffected == 0 {
-			var resp errorResponse
-			resp.Error = "задача с указанным id не найдена"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusNotFound)
-			return
-		}
-
-		res.Header().Set("Content-Type", "application/json")
-		res.WriteHeader(http.StatusOK)
-		respBytes, err := json.Marshal(struct{}{})
+	sqlRes, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка запроса к базе данных"
+		respBytes, err := json.Marshal(resp)
 		if err != nil {
 			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
 			return
 		}
-		_, err = res.Write(respBytes)
-		if err != nil {
-			var resp errorResponse
-			resp.Error = "ошибка при записи ответа"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
-		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
 		return
+	}
+
+	rowsAffected, err := sqlRes.RowsAffected()
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка получения количества затронутых строк"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		var resp errorResponse
+		resp.Error = "задача с указанным id не найдена"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusNotFound)
+		return
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	respBytes, err := json.Marshal(struct{}{})
+	if err != nil {
+		http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+		return
+	}
+	_, err = res.Write(respBytes)
+	if err != nil {
+		var resp errorResponse
+		resp.Error = "ошибка при записи ответа"
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
+			return
+		}
+		http.Error(res, string(respBytes), http.StatusInternalServerError)
 	}
 }
 
@@ -1012,6 +1002,7 @@ func main() {
 	r.Delete("/api/task", auth(handleDeleteTask))
 	r.Post("/api/task/done", auth(handleDoneTask))
 	r.Post("/api/signin", handleSignIn)
+	r.Delete("/api/task", auth(handleDeleteTask))
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
