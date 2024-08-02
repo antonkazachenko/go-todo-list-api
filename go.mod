@@ -1,4 +1,4 @@
-module github.com/creamlaflare/go-todo-list-api
+module github.com/antonkazachenko/go-todo-list-api
 
 go 1.22.2
 
