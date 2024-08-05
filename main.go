@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/antonkazachenko/go-todo-list-api/routes"
 	"log"
 	"net/http"
 	"path/filepath"
+
+	"github.com/antonkazachenko/go-todo-list-api/routes"
 
 	"github.com/antonkazachenko/go-todo-list-api/config"
 	"github.com/antonkazachenko/go-todo-list-api/database"
@@ -24,6 +25,8 @@ func main() {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+
+	log.Printf("Starting server on :%s", config.TODO_PORT)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", config.TODO_PORT), r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

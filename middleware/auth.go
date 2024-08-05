@@ -1,14 +1,14 @@
 package middleware
 
 import (
+	"github.com/antonkazachenko/go-todo-list-api/config"
 	"github.com/golang-jwt/jwt/v4"
 	"net/http"
-	"os"
 )
 
 func Auth(next http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pass := os.Getenv("TODO_PASSWORD")
+		pass := config.TODO_PASS
 		if len(pass) > 0 {
 			var jwtToken string
 			cookie, err := r.Cookie("token")

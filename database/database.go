@@ -17,9 +17,9 @@ func InitDB() *sql.DB {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS scheduler (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		date TEXT NOT NULL,
-		title TEXT NOT NULL,
-		comment TEXT,
-		repeat TEXT
+		title TEXT NOT NULL CHECK(LENGTH(title) <= 255),
+		comment TEXT CHECK(LENGTH(comment) <= 1024),
+		repeat TEXT CHECK(LENGTH(repeat) <= 255)
 	)`)
 	if err != nil {
 		log.Fatalf("Failed to create table: %v", err)

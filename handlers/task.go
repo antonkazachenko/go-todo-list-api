@@ -6,19 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/antonkazachenko/go-todo-list-api/models"
+	"github.com/antonkazachenko/go-todo-list-api/utils"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/antonkazachenko/go-todo-list-api/models"
 )
+
+const format = "20060102"
 
 type Handlers struct {
 	DB *sql.DB
 }
 
 func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, error) {
-	parsedDate, err := time.Parse("20060102", date)
+	parsedDate, err := time.Parse(format, date)
 	if err != nil {
 		return "", errors.New("недопустимый формат date")
 	}
@@ -46,9 +50,9 @@ func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, 
 				return "", errors.New("превышен максимально допустимый интервал")
 			}
 
-			if now.Format("20060102") != parsedDate.Format("20060102") {
+			if now.Format(format) != parsedDate.Format(format) {
 				if now.After(parsedDate) {
-					for now.After(parsedDate) || now.Format("20060102") == parsedDate.Format("20060102") {
+					for now.After(parsedDate) || now.Format(format) == parsedDate.Format(format) {
 						parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
 					}
 				} else {
@@ -166,7 +170,7 @@ func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, 
 		return "", errors.New("недопустимый символ")
 	}
 
-	return parsedDate.Format("20060102"), nil
+	return parsedDate.Format(format), nil
 }
 
 func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
@@ -175,75 +179,40 @@ func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 
 	_, err := buf.ReadFrom(req.Body)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка десериализации JSON"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "ошибка чтения тела запроса", http.StatusBadRequest)
 		return
 	}
 
 	if err = json.Unmarshal(buf.Bytes(), &task); err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка десериализации JSON"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "ошибка декодирования JSON", http.StatusBadRequest)
 		return
 	}
 
 	if task.Title == "" {
-		var resp models.ErrorResponse
-		resp.Error = "отсутствует обязательное поле title"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "отсутствует обязательное поле title", http.StatusBadRequest)
 		return
 	}
 
 	var dateInTime time.Time
 	if task.Date != "" {
-		dateInTime, err = time.Parse("20060102", task.Date)
+		dateInTime, err = time.Parse(format, task.Date)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "недопустимый формат date"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusBadRequest)
+			utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 			return
 		}
 	} else {
-		task.Date = time.Now().Format("20060102")
+		task.Date = time.Now().Format(format)
 		dateInTime = time.Now()
 	}
 
 	if time.Now().After(dateInTime) {
 		if task.Repeat == "" {
-			task.Date = time.Now().Format("20060102")
+			task.Date = time.Now().Format(format)
 			dateInTime = time.Now()
 		} else {
 			task.Date, err = h.NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-				var resp models.ErrorResponse
-				resp.Error = "правило повторения указано в неправильном формате"
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-					return
-				}
-				http.Error(res, string(respBytes), http.StatusBadRequest)
+				utils.SendErrorResponse(res, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
@@ -252,14 +221,7 @@ func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 	result, err := h.DB.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
 		task.Date, task.Title, task.Comment, task.Repeat)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка запроса к базе данных"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 
@@ -292,28 +254,23 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 	args := []interface{}{}
 
 	parsedDate, dateErr := time.Parse("02.01.2006", searchTerm)
-	if dateErr == nil {
-		formattedDate := parsedDate.Format("20060102")
+	switch {
+	case dateErr == nil:
+		formattedDate := parsedDate.Format(format)
 		query += " WHERE date = ? ORDER BY date LIMIT ?"
 		args = append(args, formattedDate, limit)
-	} else if searchTerm != "" {
+	case searchTerm != "":
 		query += " WHERE title LIKE ? OR comment LIKE ? ORDER BY date LIMIT ?"
 		searchTerm = "%" + searchTerm + "%"
 		args = append(args, searchTerm, searchTerm, limit)
-	} else {
+	default:
 		query += " ORDER BY date LIMIT ?"
 		args = append(args, limit)
 	}
+
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка запроса к базе данных"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -324,14 +281,7 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 		var date, title, comment, repeat string
 		err = rows.Scan(&id, &date, &title, &comment, &repeat)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "ошибка сканирования строки"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			utils.SendErrorResponse(res, "ошибка сканирования строки", http.StatusInternalServerError)
 			return
 		}
 		taskMap := map[string]string{
@@ -349,28 +299,14 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 	}
 	resp, err := json.Marshal(map[string][]map[string]string{"tasks": tasks})
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка сериализации ответа"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка сериализации ответа", http.StatusInternalServerError)
 		return
 	}
 	res.Header().Set("Content-Type", "application/json")
 	res.WriteHeader(http.StatusOK)
 	_, err = res.Write(resp)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка записи ответа"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
 		return
 	}
 }
@@ -383,52 +319,24 @@ func (h *Handlers) HandleGetTask(res http.ResponseWriter, req *http.Request) {
 		var task models.Task
 		err := row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "задача с указанным id не найдена"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusNotFound)
+			utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 			return
 		}
 
 		resp, err := json.Marshal(task)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "ошибка сериализации ответа"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			utils.SendErrorResponse(res, "ошибка сериализации ответа", http.StatusInternalServerError)
 			return
 		}
 		res.Header().Set("Content-Type", "application/json")
 		res.WriteHeader(http.StatusOK)
 		_, err = res.Write(resp)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "ошибка записи ответа"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		var resp models.ErrorResponse
-		resp.Error = "отсутствует обязательный параметр id"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
 		return
 	}
 }
@@ -437,66 +345,30 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 	var taskUpdates map[string]interface{}
 	err := json.NewDecoder(req.Body).Decode(&taskUpdates)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка десериализации JSON"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "ошибка декодирования JSON", http.StatusBadRequest)
 		return
 	}
 
 	id, ok := taskUpdates["id"].(string)
 	if !ok {
-		var resp models.ErrorResponse
-		resp.Error = "отсутствует обязательное поле id"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
-		return
+		utils.SendErrorResponse(res, "отсутствует обязательное поле id", http.StatusBadRequest)
 	}
 
 	title, ok := taskUpdates["title"].(string)
 	if !ok || title == "" {
-		var resp models.ErrorResponse
-		resp.Error = "отсутствует обязательное поле title"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "отсутствует обязательное поле title", http.StatusBadRequest)
 		return
 	}
 
 	date, ok := taskUpdates["date"].(string)
 	if !ok || date == "" {
-		var resp models.ErrorResponse
-		resp.Error = "отсутствует обязательное поле date"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "отсутствует обязательное поле date", http.StatusBadRequest)
 		return
 	}
 
-	_, err = time.Parse("20060102", date)
+	_, err = time.Parse(format, date)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "недопустимый формат date"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 		return
 	}
 
@@ -505,14 +377,7 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 			repeatParts := strings.SplitN(repeat, " ", 2)
 			repeatType := repeatParts[0]
 			if repeatType != "d" && repeatType != "w" && repeatType != "m" && repeatType != "y" {
-				var resp models.ErrorResponse
-				resp.Error = "недопустимый символ"
-				respBytes, err := json.Marshal(resp)
-				if err != nil {
-					http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-					return
-				}
-				http.Error(res, string(respBytes), http.StatusBadRequest)
+				utils.SendErrorResponse(res, "недопустимый символ", http.StatusBadRequest)
 				return
 			}
 		}
@@ -538,39 +403,18 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 
 	result, err := h.DB.Exec(query, args...)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка запроса к базе данных"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка получения числа затронутых строк"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка получения количества затронутых строк", http.StatusInternalServerError)
 		return
 	}
 
 	if rowsAffected == 0 {
-		var resp models.ErrorResponse
-		resp.Error = "задача с указанным id не найдена"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusNotFound)
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
@@ -578,14 +422,8 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(http.StatusOK)
 	_, err = res.Write([]byte(`{}`))
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка при записи ответа"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -593,52 +431,24 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 	id := req.URL.Query().Get("id")
 
 	if id == "" {
-		var resp models.ErrorResponse
-		resp.Error = "не передан идентификатор"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
 		return
 	}
 
 	sqlRes, err := h.DB.Exec("DELETE FROM scheduler WHERE id = ?", id)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка запроса к базе данных"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := sqlRes.RowsAffected()
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка получения количества затронутых строк"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка получения количества затронутых строк", http.StatusInternalServerError)
 		return
 	}
 
 	if rowsAffected == 0 {
-		var resp models.ErrorResponse
-		resp.Error = "задача с указанным id не найдена"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusNotFound)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusNotFound)
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
@@ -651,14 +461,8 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 	}
 	_, err = res.Write(respBytes)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка при записи ответа"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -666,14 +470,7 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
 	if id == "" {
-		var resp models.ErrorResponse
-		resp.Error = "не передан идентификатор"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusBadRequest)
+		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
 		return
 	}
 
@@ -683,80 +480,38 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 	err := row.Scan(&taskID, &date, &title, &comment, &repeat)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			var resp models.ErrorResponse
-			resp.Error = "задача с указанным id не найдена"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusNotFound)
+			utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 			return
 		}
-		var resp models.ErrorResponse
-		resp.Error = "ошибка сканирования строки"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 
 	if repeat == "" {
 		_, err = h.DB.Exec("DELETE FROM scheduler WHERE id = ?", taskID)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "ошибка запроса к базе данных"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		parsedDate, err := time.Parse("20060102", date)
+		parsedDate, err := time.Parse(format, date)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "недопустимый формат date"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusBadRequest)
+			utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 			return
 		}
-		if parsedDate.Format("20060102") == time.Now().Format("20060102") {
+		if parsedDate.Format(format) == time.Now().Format(format) {
 			parsedDate = parsedDate.AddDate(0, 0, -1)
 			date, err = h.NextDate(parsedDate, date, repeat)
 		} else {
 			date, err = h.NextDate(time.Now(), date, repeat)
 		}
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "правило повторения указано в неправильном формате"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusBadRequest)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusBadRequest)
+			utils.SendErrorResponse(res, err.Error(), http.StatusBadRequest)
 			return
 		}
 		_, err = h.DB.Exec("UPDATE scheduler SET date = ? WHERE id = ?", date, taskID)
 		if err != nil {
-			var resp models.ErrorResponse
-			resp.Error = "ошибка запроса к базе данных"
-			respBytes, err := json.Marshal(resp)
-			if err != nil {
-				http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-				return
-			}
-			http.Error(res, string(respBytes), http.StatusInternalServerError)
+			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -770,13 +525,7 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 	}
 	_, err = res.Write(respBytes)
 	if err != nil {
-		var resp models.ErrorResponse
-		resp.Error = "ошибка при записи ответа"
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(res, "ошибка при сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		http.Error(res, string(respBytes), http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
+		return
 	}
 }

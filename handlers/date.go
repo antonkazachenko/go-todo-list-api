@@ -11,7 +11,7 @@ func (h *Handlers) HandleNextDate(res http.ResponseWriter, req *http.Request) {
 	date := req.URL.Query().Get("date")
 	repeat := req.URL.Query().Get("repeat")
 
-	now, err := time.Parse("20060102", nowParam)
+	now, err := time.Parse(format, nowParam)
 
 	if err != nil {
 		http.Error(res, "Неправильный формат парамeтра now", http.StatusBadRequest)

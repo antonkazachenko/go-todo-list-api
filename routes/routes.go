@@ -2,6 +2,7 @@ package routes
 
 import (
 	"database/sql"
+
 	"github.com/antonkazachenko/go-todo-list-api/handlers"
 	"github.com/antonkazachenko/go-todo-list-api/middleware"
 	"github.com/go-chi/chi/v5"
