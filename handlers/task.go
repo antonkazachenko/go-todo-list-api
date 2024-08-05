@@ -2,23 +2,23 @@ package handlers
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
+	"github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
+	"github.com/antonkazachenko/go-todo-list-api/models"
 	"github.com/antonkazachenko/go-todo-list-api/utils"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/antonkazachenko/go-todo-list-api/models"
 )
 
 const format = "20060102"
 
 type Handlers struct {
-	DB *sql.DB
+	TaskRepo storage.SQLiteTaskRepository
 }
 
 func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, error) {
@@ -175,7 +175,7 @@ func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, 
 
 func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 	var buf bytes.Buffer
-	var task models.Task
+	var task entities.Task
 
 	_, err := buf.ReadFrom(req.Body)
 	if err != nil {
@@ -218,28 +218,21 @@ func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	result, err := h.DB.Exec("INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
-		task.Date, task.Title, task.Comment, task.Repeat)
+	id, err := h.TaskRepo.AddTask(task)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
 
-	var ret models.IDResponse
-	ret.ID, err = result.LastInsertId()
-	if err != nil {
-		http.Error(res, fmt.Sprintf("ошибка получения последнего добавленного ID: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	resp, err := json.Marshal(ret)
+	resp := models.IDResponse{ID: id}
+	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		http.Error(res, fmt.Sprintf("ошибка при сериализации ответа: %v", err), http.StatusBadRequest)
 		return
 	}
 	res.Header().Set("Content-Type", "application/json")
 	res.WriteHeader(http.StatusOK)
-	_, err = res.Write(resp)
+	_, err = res.Write(respBytes)
 	if err != nil {
 		http.Error(res, fmt.Sprintf("ошибка при записи ответа: %v", err), http.StatusBadRequest)
 		return
@@ -250,61 +243,23 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 	searchTerm := req.URL.Query().Get("search")
 	limit := 100
 
-	query := "SELECT id, date, title, comment, repeat FROM scheduler"
-	args := []interface{}{}
-
-	parsedDate, dateErr := time.Parse("02.01.2006", searchTerm)
-	switch {
-	case dateErr == nil:
-		formattedDate := parsedDate.Format(format)
-		query += " WHERE date = ? ORDER BY date LIMIT ?"
-		args = append(args, formattedDate, limit)
-	case searchTerm != "":
-		query += " WHERE title LIKE ? OR comment LIKE ? ORDER BY date LIMIT ?"
-		searchTerm = "%" + searchTerm + "%"
-		args = append(args, searchTerm, searchTerm, limit)
-	default:
-		query += " ORDER BY date LIMIT ?"
-		args = append(args, limit)
-	}
-
-	rows, err := h.DB.Query(query, args...)
+	tasks, err := h.TaskRepo.GetTasks(searchTerm, limit)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	var tasks []map[string]string
-	for rows.Next() {
-		var id int64
-		var date, title, comment, repeat string
-		err = rows.Scan(&id, &date, &title, &comment, &repeat)
-		if err != nil {
-			utils.SendErrorResponse(res, "ошибка сканирования строки", http.StatusInternalServerError)
-			return
-		}
-		taskMap := map[string]string{
-			"id":      strconv.FormatInt(id, 10),
-			"date":    date,
-			"title":   title,
-			"comment": comment,
-			"repeat":  repeat,
-		}
-		tasks = append(tasks, taskMap)
-	}
 
 	if tasks == nil {
-		tasks = make([]map[string]string, 0)
+		tasks = []entities.Task{}
 	}
-	resp, err := json.Marshal(map[string][]map[string]string{"tasks": tasks})
+	respBytes, err := json.Marshal(map[string][]entities.Task{"tasks": tasks})
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка сериализации ответа", http.StatusInternalServerError)
 		return
 	}
 	res.Header().Set("Content-Type", "application/json")
 	res.WriteHeader(http.StatusOK)
-	_, err = res.Write(resp)
+	_, err = res.Write(respBytes)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
 		return
@@ -314,29 +269,27 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 func (h *Handlers) HandleGetTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
-	if id != "" {
-		row := h.DB.QueryRow("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
-		var task models.Task
-		err := row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
-		if err != nil {
-			utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
-			return
-		}
-
-		resp, err := json.Marshal(task)
-		if err != nil {
-			utils.SendErrorResponse(res, "ошибка сериализации ответа", http.StatusInternalServerError)
-			return
-		}
-		res.Header().Set("Content-Type", "application/json")
-		res.WriteHeader(http.StatusOK)
-		_, err = res.Write(resp)
-		if err != nil {
-			utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
-			return
-		}
-	} else {
+	if id == "" {
 		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
+		return
+	}
+
+	task, err := h.TaskRepo.GetTaskByID(id)
+	if err != nil {
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
+		return
+	}
+
+	respBytes, err := json.Marshal(task)
+	if err != nil {
+		utils.SendErrorResponse(res, "ошибка сериализации ответа", http.StatusInternalServerError)
+		return
+	}
+	res.Header().Set("Content-Type", "application/json")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write(respBytes)
+	if err != nil {
+		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
 		return
 	}
 }
@@ -349,72 +302,15 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	id, ok := taskUpdates["id"].(string)
+	_, ok := taskUpdates["id"].(string)
 	if !ok {
 		utils.SendErrorResponse(res, "отсутствует обязательное поле id", http.StatusBadRequest)
-	}
-
-	title, ok := taskUpdates["title"].(string)
-	if !ok || title == "" {
-		utils.SendErrorResponse(res, "отсутствует обязательное поле title", http.StatusBadRequest)
 		return
 	}
 
-	date, ok := taskUpdates["date"].(string)
-	if !ok || date == "" {
-		utils.SendErrorResponse(res, "отсутствует обязательное поле date", http.StatusBadRequest)
-		return
-	}
-
-	_, err = time.Parse(format, date)
-	if err != nil {
-		utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
-		return
-	}
-
-	if repeat, ok := taskUpdates["repeat"].(string); ok {
-		if repeat != "" {
-			repeatParts := strings.SplitN(repeat, " ", 2)
-			repeatType := repeatParts[0]
-			if repeatType != "d" && repeatType != "w" && repeatType != "m" && repeatType != "y" {
-				utils.SendErrorResponse(res, "недопустимый символ", http.StatusBadRequest)
-				return
-			}
-		}
-	}
-
-	query := "UPDATE scheduler SET "
-	args := []interface{}{}
-	i := 0
-
-	for key, value := range taskUpdates {
-		if key != "id" {
-			if i > 0 {
-				query += ", "
-			}
-			query += fmt.Sprintf("%s = ?", key)
-			args = append(args, value)
-			i++
-		}
-	}
-
-	query += " WHERE id = ?"
-	args = append(args, id)
-
-	result, err := h.DB.Exec(query, args...)
+	_, err = h.TaskRepo.UpdateTask(taskUpdates)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
-		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		utils.SendErrorResponse(res, "ошибка получения количества затронутых строк", http.StatusInternalServerError)
-		return
-	}
-
-	if rowsAffected == 0 {
-		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
@@ -435,20 +331,9 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	sqlRes, err := h.DB.Exec("DELETE FROM scheduler WHERE id = ?", id)
+	_, err := h.TaskRepo.DeleteTask(id)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
-		return
-	}
-
-	rowsAffected, err := sqlRes.RowsAffected()
-	if err != nil {
-		utils.SendErrorResponse(res, "ошибка получения количества затронутых строк", http.StatusInternalServerError)
-		return
-	}
-
-	if rowsAffected == 0 {
-		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
@@ -474,42 +359,38 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	row := h.DB.QueryRow("SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?", id)
-	var taskID int64
-	var date, title, comment, repeat string
-	err := row.Scan(&taskID, &date, &title, &comment, &repeat)
+	task, err := h.TaskRepo.GetTaskByID(id)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
-			return
-		}
-		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
-	if repeat == "" {
-		_, err = h.DB.Exec("DELETE FROM scheduler WHERE id = ?", taskID)
+	if task.Repeat == "" {
+		_, err = h.TaskRepo.DeleteTask(id)
 		if err != nil {
 			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		parsedDate, err := time.Parse(format, date)
+		parsedDate, err := time.Parse(format, task.Date)
 		if err != nil {
 			utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 			return
 		}
+
 		if parsedDate.Format(format) == time.Now().Format(format) {
 			parsedDate = parsedDate.AddDate(0, 0, -1)
-			date, err = h.NextDate(parsedDate, date, repeat)
+			task.Date, err = h.NextDate(parsedDate, task.Date, task.Repeat)
 		} else {
-			date, err = h.NextDate(time.Now(), date, repeat)
+			task.Date, err = h.NextDate(time.Now(), task.Date, task.Repeat)
 		}
+
 		if err != nil {
 			utils.SendErrorResponse(res, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_, err = h.DB.Exec("UPDATE scheduler SET date = ? WHERE id = ?", date, taskID)
+
+		err = h.TaskRepo.MarkTaskAsDone(id, task.Date)
 		if err != nil {
 			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
