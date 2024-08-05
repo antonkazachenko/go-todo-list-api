@@ -1,16 +1,16 @@
 package routes
 
 import (
-	"database/sql"
-
-	"github.com/antonkazachenko/go-todo-list-api/handlers"
+	"github.com/antonkazachenko/go-todo-list-api/internal/server"
+	"github.com/antonkazachenko/go-todo-list-api/internal/service"
 	"github.com/antonkazachenko/go-todo-list-api/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterRoutes(db *sql.DB) *chi.Mux {
+func RegisterRoutes(taskService *service.TaskService) *chi.Mux {
 	r := chi.NewRouter()
-	h := &handlers.Handlers{DB: db}
+
+	h := handlers.NewHandlers(taskService)
 
 	r.Get("/api/nextdate", h.HandleNextDate)
 	r.Post("/api/task", middleware.Auth(h.HandleAddTask))

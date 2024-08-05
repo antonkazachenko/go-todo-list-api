@@ -3,10 +3,9 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
-	"github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
+	"github.com/antonkazachenko/go-todo-list-api/internal/service"
 	"github.com/antonkazachenko/go-todo-list-api/models"
 	"github.com/antonkazachenko/go-todo-list-api/utils"
 	"net/http"
@@ -15,162 +14,12 @@ import (
 	"time"
 )
 
-const format = "20060102"
-
 type Handlers struct {
-	TaskRepo storage.SQLiteTaskRepository
+	TaskService *service.TaskService
 }
 
-func (h *Handlers) NextDate(now time.Time, date string, repeat string) (string, error) {
-	parsedDate, err := time.Parse(format, date)
-	if err != nil {
-		return "", errors.New("недопустимый формат date")
-	}
-
-	repeatParts := strings.SplitN(repeat, " ", 2)
-	repeatType := ""
-	repeatRule := ""
-
-	if len(repeatParts) > 0 {
-		repeatType = repeatParts[0]
-	}
-	if len(repeatParts) > 1 {
-		repeatRule = repeatParts[1]
-	}
-
-	if repeatType == "d" {
-		if repeatRule == "" {
-			return "", errors.New("не указан интервал в днях")
-		} else {
-			numberOfDays, err := strconv.Atoi(repeatRule)
-			if err != nil {
-				return "", errors.New("некорректно указано правило repeat")
-			}
-			if numberOfDays > 400 {
-				return "", errors.New("превышен максимально допустимый интервал")
-			}
-
-			if now.Format(format) != parsedDate.Format(format) {
-				if now.After(parsedDate) {
-					for now.After(parsedDate) || now.Format(format) == parsedDate.Format(format) {
-						parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-					}
-				} else {
-					parsedDate = parsedDate.AddDate(0, 0, numberOfDays)
-				}
-			}
-
-		}
-	} else if repeatType == "y" {
-		parsedDate = parsedDate.AddDate(1, 0, 0)
-		for now.After(parsedDate) {
-			parsedDate = parsedDate.AddDate(1, 0, 0)
-		}
-	} else if repeatType == "w" {
-		substrings := strings.Split(repeatRule, ",")
-
-		daysOfWeek := make(map[int]bool)
-		for _, value := range substrings {
-			number, err := strconv.Atoi(value)
-			if err != nil {
-				return "", errors.New("ошибка конвертации значения дня недели")
-			}
-			if number < 1 || number > 7 {
-				return "", errors.New("недопустимое значение дня недели")
-			}
-
-			if number == 7 {
-				number = 0
-			}
-			daysOfWeek[number] = true
-		}
-
-		for {
-			if daysOfWeek[int(parsedDate.Weekday())] {
-				if now.Before(parsedDate) {
-					break
-				}
-			}
-			parsedDate = parsedDate.AddDate(0, 0, 1)
-		}
-	} else if repeatType == "m" {
-		repeatParts := strings.Split(repeatRule, " ")
-		daysPart := repeatParts[0]
-		monthsPart := ""
-		if len(repeatParts) > 1 {
-			monthsPart = repeatParts[1]
-		}
-
-		days := strings.Split(daysPart, ",")
-		months := strings.Split(monthsPart, ",")
-
-		dayMap := make(map[int]bool)
-		for _, dayStr := range days {
-			day, err := strconv.Atoi(dayStr)
-			if err != nil {
-				return "", errors.New("ошибка конвертации значения дня месяца")
-			}
-			if day < -2 || day > 31 || day == 0 {
-				return "", errors.New("недопустимое значение дня месяца")
-			}
-			dayMap[day] = true
-		}
-
-		monthMap := make(map[int]bool)
-		for _, monthStr := range months {
-			if monthStr != "" {
-				month, err := strconv.Atoi(monthStr)
-				if err != nil {
-					return "", errors.New("ошибка конвертации значения месяца")
-				}
-				if month < 1 || month > 12 {
-					return "", errors.New("недопустимое значение месяца")
-				}
-				monthMap[month] = true
-			}
-		}
-
-		found := false
-		for i := 0; i < 12*10; i++ {
-			month := int(parsedDate.Month())
-			if len(monthMap) > 0 && !monthMap[month] {
-				parsedDate = parsedDate.AddDate(0, 1, 0)
-				parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
-				continue
-			}
-
-			lastDayOfMonth := time.Date(parsedDate.Year(), parsedDate.Month()+1, 0, 0, 0, 0, 0, parsedDate.Location()).Day()
-			for targetDay := range dayMap {
-				if targetDay > 0 {
-					if parsedDate.Day() == targetDay && now.Before(parsedDate) {
-						found = true
-						break
-					}
-				} else if targetDay < 0 {
-					if parsedDate.Day() == lastDayOfMonth+targetDay+1 && now.Before(parsedDate) {
-						found = true
-						break
-					}
-				}
-			}
-			if found {
-				break
-			}
-
-			parsedDate = parsedDate.AddDate(0, 0, 1)
-			if parsedDate.Day() == 1 {
-				parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
-			}
-		}
-
-		if !found {
-			return "", nil
-		}
-	} else {
-		return "", errors.New("недопустимый символ")
-	}
-
-	return parsedDate.Format(format), nil
+func NewHandlers(taskService *service.TaskService) *Handlers {
+	return &Handlers{TaskService: taskService}
 }
 
 func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
@@ -195,22 +44,22 @@ func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 
 	var dateInTime time.Time
 	if task.Date != "" {
-		dateInTime, err = time.Parse(format, task.Date)
+		dateInTime, err = time.Parse(service.Format, task.Date)
 		if err != nil {
 			utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 			return
 		}
 	} else {
-		task.Date = time.Now().Format(format)
+		task.Date = time.Now().Format(service.Format)
 		dateInTime = time.Now()
 	}
 
 	if time.Now().After(dateInTime) {
 		if task.Repeat == "" {
-			task.Date = time.Now().Format(format)
+			task.Date = time.Now().Format(service.Format)
 			dateInTime = time.Now()
 		} else {
-			task.Date, err = h.NextDate(time.Now(), task.Date, task.Repeat)
+			task.Date, err = h.TaskService.NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
 				utils.SendErrorResponse(res, err.Error(), http.StatusBadRequest)
 				return
@@ -218,7 +67,7 @@ func (h *Handlers) HandleAddTask(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	id, err := h.TaskRepo.AddTask(task)
+	id, err := h.TaskService.Repo.AddTask(task)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
@@ -243,7 +92,7 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 	searchTerm := req.URL.Query().Get("search")
 	limit := 100
 
-	tasks, err := h.TaskRepo.GetTasks(searchTerm, limit)
+	tasks, err := h.TaskService.Repo.GetTasks(searchTerm, limit)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
@@ -274,7 +123,7 @@ func (h *Handlers) HandleGetTask(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	task, err := h.TaskRepo.GetTaskByID(id)
+	task, err := h.TaskService.Repo.GetTaskByID(id)
 	if err != nil {
 		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
@@ -296,19 +145,61 @@ func (h *Handlers) HandleGetTask(res http.ResponseWriter, req *http.Request) {
 
 func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 	var taskUpdates map[string]interface{}
+
 	err := json.NewDecoder(req.Body).Decode(&taskUpdates)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка декодирования JSON", http.StatusBadRequest)
 		return
 	}
 
-	_, ok := taskUpdates["id"].(string)
-	if !ok {
+	id, ok := taskUpdates["id"].(string)
+	if !ok || id == "" {
 		utils.SendErrorResponse(res, "отсутствует обязательное поле id", http.StatusBadRequest)
 		return
 	}
 
-	_, err = h.TaskRepo.UpdateTask(taskUpdates)
+	_, err = strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		utils.SendErrorResponse(res, "id должен быть числом", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.TaskService.Repo.GetTaskByID(id)
+	if err != nil {
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
+		return
+	}
+
+	title, ok := taskUpdates["title"].(string)
+	if !ok || title == "" {
+		utils.SendErrorResponse(res, "отсутствует обязательное поле title", http.StatusBadRequest)
+		return
+	}
+
+	date, ok := taskUpdates["date"].(string)
+	if !ok || date == "" {
+		utils.SendErrorResponse(res, "отсутствует обязательное поле date", http.StatusBadRequest)
+		return
+	}
+
+	_, err = time.Parse("20060102", date)
+	if err != nil {
+		utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
+		return
+	}
+
+	if repeat, ok := taskUpdates["repeat"].(string); ok {
+		if repeat != "" {
+			repeatParts := strings.SplitN(repeat, " ", 2)
+			repeatType := repeatParts[0]
+			if repeatType != "d" && repeatType != "w" && repeatType != "m" && repeatType != "y" {
+				utils.SendErrorResponse(res, "недопустимый символ", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
+	_, err = h.TaskService.Repo.UpdateTask(taskUpdates)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
@@ -331,7 +222,19 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	_, err := h.TaskRepo.DeleteTask(id)
+	_, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		utils.SendErrorResponse(res, "id должен быть числом", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.TaskService.Repo.GetTaskByID(id)
+	if err != nil {
+		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
+		return
+	}
+
+	_, err = h.TaskService.Repo.DeleteTask(id)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 		return
@@ -359,30 +262,30 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	task, err := h.TaskRepo.GetTaskByID(id)
+	task, err := h.TaskService.Repo.GetTaskByID(id)
 	if err != nil {
 		utils.SendErrorResponse(res, "задача с указанным id не найдена", http.StatusNotFound)
 		return
 	}
 
 	if task.Repeat == "" {
-		_, err = h.TaskRepo.DeleteTask(id)
+		_, err = h.TaskService.Repo.DeleteTask(id)
 		if err != nil {
 			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		parsedDate, err := time.Parse(format, task.Date)
+		parsedDate, err := time.Parse(service.Format, task.Date)
 		if err != nil {
 			utils.SendErrorResponse(res, "недопустимый формат date", http.StatusBadRequest)
 			return
 		}
 
-		if parsedDate.Format(format) == time.Now().Format(format) {
+		if parsedDate.Format(service.Format) == time.Now().Format(service.Format) {
 			parsedDate = parsedDate.AddDate(0, 0, -1)
-			task.Date, err = h.NextDate(parsedDate, task.Date, task.Repeat)
+			task.Date, err = h.TaskService.NextDate(parsedDate, task.Date, task.Repeat)
 		} else {
-			task.Date, err = h.NextDate(time.Now(), task.Date, task.Repeat)
+			task.Date, err = h.TaskService.NextDate(time.Now(), task.Date, task.Repeat)
 		}
 
 		if err != nil {
@@ -390,7 +293,7 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		err = h.TaskRepo.MarkTaskAsDone(id, task.Date)
+		err = h.TaskService.Repo.MarkTaskAsDone(id, task.Date)
 		if err != nil {
 			utils.SendErrorResponse(res, "ошибка запроса к базе данных", http.StatusInternalServerError)
 			return
@@ -407,6 +310,35 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 	_, err = res.Write(respBytes)
 	if err != nil {
 		utils.SendErrorResponse(res, "ошибка записи ответа", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (h *Handlers) HandleNextDate(res http.ResponseWriter, req *http.Request) {
+	nowParam := req.URL.Query().Get("now")
+	date := req.URL.Query().Get("date")
+	repeat := req.URL.Query().Get("repeat")
+
+	now, err := time.Parse(service.Format, nowParam)
+
+	if err != nil {
+		http.Error(res, "Неправильный формат парамeтра now", http.StatusBadRequest)
+		return
+	}
+	var newDate string
+	if repeat != "" {
+		newDate, err = h.TaskService.NextDate(now, date, repeat)
+	}
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	res.Header().Set("Content-Type", "text/plain")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write([]byte(newDate))
+	if err != nil {
+		fmt.Printf("Error in writing a response for /api/nextdate GET request,\n %v", err)
 		return
 	}
 }
