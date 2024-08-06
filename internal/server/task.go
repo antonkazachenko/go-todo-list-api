@@ -105,7 +105,7 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	sendJSONResponse(res, http.StatusOK, nil)
+	sendJSONResponse(res, http.StatusOK, "{}")
 }
 
 func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) {
@@ -120,7 +120,7 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	sendJSONResponse(res, http.StatusOK, nil)
+	sendJSONResponse(res, http.StatusOK, "{}")
 }
 
 func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
@@ -148,7 +148,7 @@ func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	sendJSONResponse(res, http.StatusOK, nil)
+	sendJSONResponse(res, http.StatusOK, "{}")
 }
 
 func (h *Handlers) HandleNextDate(res http.ResponseWriter, req *http.Request) {
