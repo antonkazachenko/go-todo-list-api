@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+
 	"github.com/antonkazachenko/go-todo-list-api/config"
 	"github.com/antonkazachenko/go-todo-list-api/models"
 	"github.com/antonkazachenko/go-todo-list-api/utils"
 	"github.com/golang-jwt/jwt/v4"
-	"net/http"
 )
 
 func (h *Handlers) HandleSignIn(res http.ResponseWriter, req *http.Request) {

@@ -2,9 +2,10 @@ package storage
 
 import (
 	"database/sql"
+	"log"
+
 	"github.com/antonkazachenko/go-todo-list-api/config"
 	_ "github.com/mattn/go-sqlite3"
-	"log"
 )
 
 func InitDB() *sql.DB {

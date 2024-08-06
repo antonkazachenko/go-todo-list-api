@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"github.com/antonkazachenko/go-todo-list-api/internal/server"
+	handlers "github.com/antonkazachenko/go-todo-list-api/internal/server"
 	"github.com/antonkazachenko/go-todo-list-api/internal/service"
 	"github.com/antonkazachenko/go-todo-list-api/middleware"
 	"github.com/go-chi/chi/v5"

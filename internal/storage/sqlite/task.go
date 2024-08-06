@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
 	"time"
+
+	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
 )
 
 type SQLiteTaskRepository struct {

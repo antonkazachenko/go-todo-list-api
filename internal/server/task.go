@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
-	"github.com/antonkazachenko/go-todo-list-api/internal/service"
-	"github.com/antonkazachenko/go-todo-list-api/models"
-	"github.com/antonkazachenko/go-todo-list-api/utils"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/antonkazachenko/go-todo-list-api/internal/entities"
+	"github.com/antonkazachenko/go-todo-list-api/internal/service"
+	"github.com/antonkazachenko/go-todo-list-api/models"
+	"github.com/antonkazachenko/go-todo-list-api/utils"
 )
 
 type Handlers struct {

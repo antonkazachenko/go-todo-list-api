@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
+	storage "github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
 )
 
 const Format = "20060102"

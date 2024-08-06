@@ -8,7 +8,7 @@ import (
 
 	"github.com/antonkazachenko/go-todo-list-api/config"
 	"github.com/antonkazachenko/go-todo-list-api/internal/service"
-	"github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
+	storage "github.com/antonkazachenko/go-todo-list-api/internal/storage/sqlite"
 	"github.com/antonkazachenko/go-todo-list-api/routes"
 )
 

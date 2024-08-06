@@ -1,9 +1,10 @@
 package middleware
 
 import (
+	"net/http"
+
 	"github.com/antonkazachenko/go-todo-list-api/config"
 	"github.com/golang-jwt/jwt/v4"
-	"net/http"
 )
 
 func Auth(next http.HandlerFunc) http.HandlerFunc {

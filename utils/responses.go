@@ -2,8 +2,9 @@ package utils
 
 import (
 	"encoding/json"
-	"github.com/antonkazachenko/go-todo-list-api/models"
 	"net/http"
+
+	"github.com/antonkazachenko/go-todo-list-api/models"
 )
 
 func SendErrorResponse(res http.ResponseWriter, errorMessage string, statusCode int) {
