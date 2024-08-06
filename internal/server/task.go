@@ -119,10 +119,7 @@ func (h *Handlers) HandleGetTasks(res http.ResponseWriter, req *http.Request) {
 func (h *Handlers) HandleGetTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
-	if id == "" {
-		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
-		return
-	}
+	id, err := parseAndValidateID(id)
 
 	task, err := h.TaskService.Repo.GetTaskByID(id)
 	if err != nil {
@@ -218,12 +215,9 @@ func (h *Handlers) HandlePutTask(res http.ResponseWriter, req *http.Request) {
 func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
-	if id == "" {
-		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
-		return
-	}
+	id, err := parseAndValidateID(id)
 
-	_, err := strconv.ParseInt(id, 10, 64)
+	_, err = strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		utils.SendErrorResponse(res, "id должен быть числом", http.StatusBadRequest)
 		return
@@ -258,10 +252,7 @@ func (h *Handlers) HandleDeleteTask(res http.ResponseWriter, req *http.Request) 
 func (h *Handlers) HandleDoneTask(res http.ResponseWriter, req *http.Request) {
 	id := req.URL.Query().Get("id")
 
-	if id == "" {
-		utils.SendErrorResponse(res, "не передан идентификатор", http.StatusBadRequest)
-		return
-	}
+	id, err := parseAndValidateID(id)
 
 	task, err := h.TaskService.Repo.GetTaskByID(id)
 	if err != nil {
@@ -342,4 +333,15 @@ func (h *Handlers) HandleNextDate(res http.ResponseWriter, req *http.Request) {
 		fmt.Printf("Error in writing a response for /api/nextdate GET request,\n %v", err)
 		return
 	}
+}
+
+func parseAndValidateID(idStr string) (string, error) {
+	if idStr == "" {
+		return "", fmt.Errorf("не передан идентификатор")
+	}
+
+	if _, err := strconv.ParseInt(idStr, 10, 64); err != nil {
+		return "", fmt.Errorf("id должен быть числом")
+	}
+	return idStr, nil
 }
