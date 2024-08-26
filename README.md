@@ -1,6 +1,7 @@
 # Go Todo List API
 
-A Go-based planner and todo list API designed to manage tasks, developed using the Chi router, SQLite for storage, and JWT for authentication.
+#### [English](#) | [Français](#) | [Русский](#)
+### Checkout the [Live Demo](https://go-todo-list-api.onrender.com/) (password: `test12345`)
 
 ## Table of Contents
 1. [Project Overview](#project-overview)
@@ -46,6 +47,8 @@ The project uses the following dependencies:
 - **SQLx**: SQL toolkit for Go (`github.com/jmoiron/sqlx`)
 - **SQLite3**: Database driver (`github.com/mattn/go-sqlite3`)
 - **Testify**: Testing utilities (`github.com/stretchr/testify`)
+
+**Note:** You need Go version **1.22.2** or higher to run the application.
 
 ## Installation
 1. Clone the repository:
