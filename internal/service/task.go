@@ -97,13 +97,22 @@ func calculateWeeklyRepeat(now, parsedDate time.Time, repeatRule string) (string
 		return "", err
 	}
 
-	for {
-		if daysOfWeek[int(parsedDate.Weekday())] {
-			if now.Before(parsedDate) {
+	if now.Before(parsedDate) {
+		for {
+			parsedDate = parsedDate.AddDate(0, 0, 1)
+			if daysOfWeek[int(parsedDate.Weekday())] {
 				break
 			}
 		}
-		parsedDate = parsedDate.AddDate(0, 0, 1)
+	} else {
+		for {
+			if daysOfWeek[int(parsedDate.Weekday())] {
+				if now.Before(parsedDate) {
+					break
+				}
+			}
+			parsedDate = parsedDate.AddDate(0, 0, 1)
+		}
 	}
 
 	return parsedDate.Format(Format), nil
