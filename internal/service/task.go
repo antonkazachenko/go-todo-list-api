@@ -149,43 +149,48 @@ func calculateMonthlyRepeat(now, parsedDate time.Time, repeatRule string) (strin
 		return "", err
 	}
 
-	found := false
-	for i := 0; i < 12*10; i++ {
-		month := int(parsedDate.Month())
-		if len(monthMap) > 0 && !monthMap[month] {
-			parsedDate = parsedDate.AddDate(0, 1, 0)
-			parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
-			continue
+	if now.Before(parsedDate) {
+		for {
+			parsedDate = parsedDate.AddDate(0, 0, 1)
+			if isValidDateForMonthlyRepeat(parsedDate, dayMap, monthMap) {
+				break
+			}
 		}
-
-		lastDayOfMonth := time.Date(parsedDate.Year(), parsedDate.Month()+1, 0, 0, 0, 0, 0, parsedDate.Location()).Day()
-		for targetDay := range dayMap {
-			if targetDay > 0 {
-				if parsedDate.Day() == targetDay && now.Before(parsedDate) {
-					found = true
-					break
-				}
-			} else if targetDay < 0 {
-				if parsedDate.Day() == lastDayOfMonth+targetDay+1 && now.Before(parsedDate) {
-					found = true
+	} else {
+		for {
+			if isValidDateForMonthlyRepeat(parsedDate, dayMap, monthMap) {
+				if now.Before(parsedDate) {
 					break
 				}
 			}
-		}
-		if found {
-			break
-		}
-
-		parsedDate = parsedDate.AddDate(0, 0, 1)
-		if parsedDate.Day() == 1 {
-			parsedDate = time.Date(parsedDate.Year(), parsedDate.Month(), 1, 0, 0, 0, 0, parsedDate.Location())
+			parsedDate = parsedDate.AddDate(0, 0, 1)
 		}
 	}
 
-	if !found {
-		return "", nil
-	}
 	return parsedDate.Format(Format), nil
+}
+
+func isValidDateForMonthlyRepeat(parsedDate time.Time, dayMap map[int]bool, monthMap map[int]bool) bool {
+	month := int(parsedDate.Month())
+
+	if len(monthMap) > 0 && !monthMap[month] {
+		return false
+	}
+
+	lastDayOfMonth := time.Date(parsedDate.Year(), parsedDate.Month()+1, 0, 0, 0, 0, 0, parsedDate.Location()).Day()
+	for targetDay := range dayMap {
+		if targetDay > 0 {
+			if parsedDate.Day() == targetDay {
+				return true
+			}
+		} else if targetDay < 0 {
+			if parsedDate.Day() == lastDayOfMonth+targetDay+1 {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func splitMonthRule(repeatRule string) (string, string) {
