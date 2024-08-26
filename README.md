@@ -1,20 +1,9 @@
 # Go Todo List API
 
-#### [English](#) | [Français](#) | [Русский](#)
+#### English | [Français](README.fr.md) | [Русский](README.ru.md)
 ### Checkout the [Live Demo](https://go-todo-list-api.onrender.com/) (password: `test12345`)
 
-## Table of Contents
-1. [Project Overview](#project-overview)
-2. [Features](#features)
-3. [Dependencies](#dependencies)
-4. [Installation](#installation)
-5. [Environment Variables](#environment-variables)
-6. [Usage](#usage)
-7. [API Endpoints](#api-endpoints)
-8. [Authentication](#authentication)
-9. [Testing](#testing)
-10. [Contributing](#contributing)
-11. [License](#license)
+**Please note that the live demo is hosted on a free Render plan, so it may take some time for the server to start up when accessed.**
 
 ## Project Overview
 This project is a simple todo list API built in Go. It provides a backend service that allows users to create, read, 
