@@ -3,7 +3,7 @@
 #### [English](README.md) | Français | [Русский](README.ru.md)
 ### Consultez la [démo en ligne](https://go-todo-list-api.onrender.com/) (mot de passe : `test12345`)
 
-**Veuillez noter que la démo en ligne est hébergée sur un plan gratuit de Render, il peut donc falloir un certain temps pour que le serveur se lance lorsqu'il est accédé.**
+**Veuillez noter que la démo en ligne est hébergée sur un plan gratuit, il va donc falloir un certain temps pour que le serveur se lance lorsque le site est accédé.**
 
 ## Aperçu du projet
 Ce projet est une API simple de liste de tâches construite en Go. Il fournit un service backend permettant aux utilisateurs de créer, lire,
